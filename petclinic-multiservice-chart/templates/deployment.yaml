@@ -14,17 +14,17 @@ spec:
       labels:
         app: {{ .name }}
     spec:
-      {{- if ne .name "config-server" }}
       initContainers:
-        {{- if ne .name "discovery-server" }}
-        - name: wait-for-discovery
-          image: busybox
-          command: ['sh', '-c', 'until nc -z discovery-server 8761; do echo waiting for discovery-server; sleep 2; done;']
+        {{- if ne .name "config-server" }}
         - name: wait-for-config
           image: busybox
           command: ['sh', '-c', 'until nc -z config-server 8888; do echo waiting for config-server; sleep 2; done;']
         {{- end }}
-      {{- end }}
+        {{- if and (ne .name "config-server") (ne .name "discovery-server") }}
+        - name: wait-for-discovery
+          image: busybox
+          command: ['sh', '-c', 'until nc -z discovery-server 8761; do echo waiting for discovery-server; sleep 2; done;']
+        {{- end }}
       containers:
         - name: {{ .name }}
           image: "{{ .image }}:{{ .tag }}"
@@ -41,10 +41,10 @@ spec:
             - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
               value: "http://discovery-server:8761/eureka/"
             {{- end }}
-          {{- if .env }}
-          {{- range .env }}
+            {{- if .env }}
+            {{- range .env }}
             - name: {{ .name }}
               value: "{{ .value }}"
-          {{- end }}
-          {{- end }}
+            {{- end }}
+            {{- end }}
 {{- end }}

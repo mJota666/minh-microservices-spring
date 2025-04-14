@@ -1,0 +1,50 @@
+{{- range .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+    spec:
+      {{- if ne .name "config-server" }}
+      initContainers:
+        {{- if ne .name "discovery-server" }}
+        - name: wait-for-discovery
+          image: busybox
+          command: ['sh', '-c', 'until nc -z discovery-server 8761; do echo waiting for discovery-server; sleep 2; done;']
+        - name: wait-for-config
+          image: busybox
+          command: ['sh', '-c', 'until nc -z config-server 8888; do echo waiting for config-server; sleep 2; done;']
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ .name }}
+          image: "{{ .image }}:{{ .tag }}"
+          ports:
+            - containerPort: {{ .port }}
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+            {{- if ne .name "config-server" }}
+            - name: SPRING_CLOUD_CONFIG_URI
+              value: "http://config-server:8888"
+            {{- end }}
+            {{- if ne .name "discovery-server" }}
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: "http://discovery-server:8761/eureka/"
+            {{- end }}
+          {{- if .env }}
+          {{- range .env }}
+            - name: {{ .name }}
+              value: "{{ .value }}"
+          {{- end }}
+          {{- end }}
+{{- end }}

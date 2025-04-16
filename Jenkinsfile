@@ -1,186 +1,91 @@
 pipeline {
-    agent none  // We'll define an agent per stage instead
-    environment {
-        // Ensure Windows system commands can be found
-        PATH = "C:\\Windows\\System32;${env.PATH}"
-    }
+    agent { label 'universal-agent' }
 
     tools {
-        maven "M3" // Ensure this matches your Maven installation configured in Jenkins
+        jdk 'jdk21'
+        maven 'M3'
+    }
+
+    environment {
+        JAVA_HOME = "${tool 'jdk21'}"
+        PATH = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
     }
 
     stages {
-        stage('Build & Test Admin Server') {
-            agent { label 'admin-agent' }
-            // Only run if changes are detected in the admin server module
-            when { changeset "**/spring-petclinic-admin-server/**" }
+        stage('📥 Checkout') {
             steps {
-                // Always checkout your code
-                checkout scm
-
-                // Build & test only the admin server module (plus any dependencies)
-                bat 'mvn -pl spring-petclinic-admin-server -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    // Publish test results
-                    junit '**/spring-petclinic-admin-server/target/surefire-reports/*.xml'
-
-                    // Publish coverage (adjust if jacoco.xml is in a different path)
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-admin-server/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
+                git branch: "${env.BRANCH_NAME ?: 'main'}",
+                    url: 'https://github.com/NPT0116/thanh-microservices-spring.git'
             }
         }
 
-        stage('Build & Test API Gateway') {
-            agent { label 'gateway-agent' }
-            when { changeset "**/spring-petclinic-api-gateway/**" }
+        stage('🧬 Detect changed services') {
             steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-api-gateway -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-api-gateway/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-api-gateway/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
-            }
-        }
+                script {
+                    def commitId = isUnix()
+                        ? sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                        : bat(script: "git rev-parse --short HEAD", returnStdout: true).trim().readLines().last().trim()
 
-        stage('Build & Test Config Server') {
-            agent { label 'config-agent' }
-            when { changeset "**/spring-petclinic-config-server/**" }
-            steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-config-server -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-config-server/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-config-server/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
-            }
-        }
+                    echo "🔍 Commit ID: ${commitId}"
 
-        stage('Build & Test Customers Service') {
-            agent { label 'customers-agent' }
-            when { changeset "**/spring-petclinic-customers-service/**/*" }
-            steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-customers-service -am clean package'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-customers-service/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
-            }
-        }
+                    // Lấy danh sách file thay đổi
+                    def changedFiles = isUnix()
+                        ? sh(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().split("\n")
+                        : bat(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().readLines()
 
-        stage('Build & Test Discovery Server') {
-            agent { label 'discovery-agent' }
-            when { changeset "**/spring-petclinic-discovery-server/**" }
-            steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-discovery-server -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-discovery-server/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-discovery-server/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
-            }
-        }
+                    echo "📂 File thay đổi:\n${changedFiles.join('\n')}"
 
-        stage('Build & Test GenAI Service') {
-            agent { label 'genai-agent' }
-            when { changeset "**/spring-petclinic-genai-service/**/*" }
-            steps {
-                checkout scm
-                bat 'mvn -Dmaven.test.failure.ignore=true -pl spring-petclinic-genai-service -am clean package'
-            }
-            post {
-                success {
-                    junit '**/spring-petclinic-genai-service/target/surefire-reports/*.xml'
-                    recordCoverage(tools: [[parser: 'JACOCO']],
-                        id: 'jacoco', name: 'JaCoCo Coverage',
-                        sourceCodeRetention: 'EVERY_BUILD',
-                        qualityGates: [
-                                [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                                [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]])
+                    def allServices = [
+                        'vets-service',
+                        'customers-service',
+                        'visits-service',
+                        'api-gateway',
+                        'config-server',
+                        'discovery-server',
+                        'admin-server'
+                    ]
 
-                }
-            }
-        }
+                    def changedServices = [] as Set
 
-        stage('Build & Test Vets Service') {
-            agent { label 'vets-agent' }
-            when { changeset "**/spring-petclinic-vets-service/**" }
-            steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-vets-service -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-vets-service/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-vets-service/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
-                }
-            }
-        }
+                    allServices.each { svc ->
+                        changedFiles.each { file ->
+                            if (file.startsWith("spring-petclinic-${svc}/")) {
+                                changedServices << svc
+                            }
+                        }
+                    }
 
-        stage('Build & Test Visits Service') {
-            agent { label 'visits-agent' }
-            when { changeset "**/spring-petclinic-visits-service/**" }
-            steps {
-                checkout scm
-                bat 'mvn -pl spring-petclinic-visits-service -am clean test jacoco:report'
-            }
-            post {
-                always {
-                    junit '**/spring-petclinic-visits-service/target/surefire-reports/*.xml'
-                    recordCoverage(
-                        tools: [[parser: 'JACOCO', pattern: '**/spring-petclinic-visits-service/target/site/jacoco/jacoco.xml']],
-                        qualityGates: [
-                            [threshold: 70.0, metric: 'LINE', baseline: 'PROJECT', unstable: false],
-                            [threshold: 70.0, metric: 'BRANCH', baseline: 'PROJECT', unstable: false]
-                        ]
-                    )
+                    if (changedServices.isEmpty()) {
+                        echo "✅ Không có service nào thay đổi, skip build."
+                        currentBuild.result = 'SUCCESS'
+                        return
+                    }
+
+                    echo "🧱 Các service thay đổi: ${changedServices.join(', ')}"
+
+                    // Build và push
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-login', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        def loginCmd = isUnix()
+                            ? "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                            : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+
+                        isUnix() ? sh(loginCmd) : bat(loginCmd)
+
+                        changedServices.each { svc ->
+                            def image = "npt1601/${svc}:${commitId}"
+                            def buildCmd = isUnix()
+                                ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
+                                : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
+
+                            def pushCmd = "docker push ${image}"
+
+                            echo "🚧 Đang build image cho ${svc} → ${image}"
+                            isUnix() ? sh(buildCmd) : bat(buildCmd)
+
+                            echo "📤 Push image lên DockerHub: ${image}"
+                            isUnix() ? sh(pushCmd) : bat(pushCmd)
+                        }
+                    }
                 }
             }
         }
@@ -188,10 +93,10 @@ pipeline {
 
     post {
         success {
-            echo 'All builds succeeded!'
+            echo "✅ Build thành công!"
         }
         failure {
-            echo 'One or more builds failed!'
+            echo "❌ Build thất bại!"
         }
     }
 }

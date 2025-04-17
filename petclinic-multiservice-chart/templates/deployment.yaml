@@ -14,12 +14,25 @@ spec:
       labels:
         app: {{ .name }}
     spec:
+      {{- if ne .name "config-server" }}
+      initContainers:
+        {{- if ne .name "discovery-server" }}
+        - name: wait-for-discovery
+          image: busybox
+          command: ['sh', '-c', 'until nc -z discovery-server 8761; do echo waiting for discovery-server; sleep 2; done;']
+        - name: wait-for-config
+          image: busybox
+          command: ['sh', '-c', 'until nc -z config-server 8888; do echo waiting for config-server; sleep 2; done;']
+        {{- end }}
+      {{- end }}
       containers:
         - name: {{ .name }}
           image: "{{ .image }}:{{ .tag }}"
           ports:
             - containerPort: {{ .port }}
           env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
             - name: EUREKA_INSTANCE_HOSTNAME
               value: "{{ .name }}"
             {{- if ne .name "config-server" }}

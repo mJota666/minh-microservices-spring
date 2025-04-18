@@ -95,19 +95,16 @@ pipeline {
         success {
             echo "✅ Build thành công!"
                     script {
-            if ((env.BRANCH_NAME ?: 'main') == 'main') {
-                echo "🔁 Đang gọi job update-argoCD-deploy-config..."
+if ((env.BRANCH_NAME ?: 'main') == 'main') {
+    echo "🔁 Đang gọi job update-argoCD-deploy-config..."
+    
+    build job: 'update-argoCD-deploy-config',
+          wait: false, // hoặc true nếu bạn muốn đợi chạy xong
+          parameters: [] // có thể truyền params tại đây nếu cần
+} else {
+    echo "⏭ Không phải branch main, không gọi job update-argoCD-deploy-config."
+}
 
-                def triggerUrl = "http://localhost:8080/job/update-argoCD-deploy-config/build?token=argocd"
-
-                if (isUnix()) {
-                    sh "curl -X POST '${triggerUrl}'"
-                } else {
-                    bat "curl -X POST \"${triggerUrl}\""
-                }
-            } else {
-                echo "⏭ Không phải branch main, không gọi job update-argoCD-deploy-config."
-            }
         }
         }
         failure {

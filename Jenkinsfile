@@ -133,6 +133,13 @@ pipeline {
                             echo "📤 Pushing ${img}"
                             isUnix() ? sh("docker push ${img}") : bat("docker push ${img}")
                         }
+                              // ── Trigger staging-config-repo job remotely ──
+      def triggerUrl = "${env.JENKINS_URL}job/staging-config-repo/build?token=staging"
+      echo "🌐 Triggering staging-config-repo: ${triggerUrl}"
+    
+    build job: 'staging-config-repo',
+          wait: false, // hoặc true nếu bạn muốn đợi chạy xong
+          parameters: [] // có thể truyền params tại đây nếu cần
                     }
                 }
             }

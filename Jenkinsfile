@@ -47,16 +47,6 @@ pipeline {
 
                     echo "📂 File thay đổi:\n${changedFiles.join('\n')}"
 
-                    def allServices = [
-                        'vets-service',
-                        'customers-service',
-                        'visits-service',
-                        'api-gateway',
-                        'config-server',
-                        'discovery-server',
-                        'admin-server'
-                    ]
-
                     def changedServices = [] as Set
 
                     allServices.each { svc ->

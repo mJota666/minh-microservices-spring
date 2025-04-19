@@ -6,7 +6,8 @@ def allServices = [
     'api-gateway',
     'config-server',
     'discovery-server',
-    'admin-server'
+    'admin-server',
+    'genai-service'
 ]
 
 pipeline {

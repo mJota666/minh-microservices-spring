@@ -1,12 +1,14 @@
-    def allServices = [
-        'vets-service',
-        'customers-service',
-        'visits-service',
-        'api-gateway',
-        'config-server',
-        'discovery-server',
-        'admin-server'
-    ]
+// ── shared list of microservices ──
+def allServices = [
+    'vets-service',
+    'customers-service',
+    'visits-service',
+    'api-gateway',
+    'config-server',
+    'discovery-server',
+    'admin-server'
+]
+
 pipeline {
     agent { label 'universal-agent' }
 
@@ -20,36 +22,34 @@ pipeline {
         PATH      = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
     }
 
-    // list all micro‑services here so we can reuse it
-
-
     stages {
         stage('📥 Checkout') {
             steps {
-                git branch: "${env.BRANCH_NAME ?: 'main'}",
-                    url: 'https://github.com/NPT0116/thanh-microservices-spring.git'
+                // checkout whatever ref (branch or tag) Jenkins detected
+                checkout scm
             }
         }
 
         stage('🧬 Detect changed services') {
-            when { not { buildingTag() } }  // skip on tags
+            when { not { buildingTag() } }  // skip for tag‐builds
             steps {
                 script {
+                    // grab the short commit ID
                     def commitId = isUnix()
                         ? sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                         : bat(script: "git rev-parse --short HEAD", returnStdout: true).trim().readLines().last().trim()
 
                     echo "🔍 Commit ID: ${commitId}"
 
-                    // Lấy danh sách file thay đổi
+                    // what files changed
                     def changedFiles = isUnix()
-                        ? sh(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().split("\n")
+                        ? sh(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().split('\n')
                         : bat(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().readLines()
 
-                    echo "📂 File thay đổi:\n${changedFiles.join('\n')}"
+                    echo "📂 Files changed:\n${changedFiles.join('\n')}"
 
+                    // detect which services changed
                     def changedServices = [] as Set
-
                     allServices.each { svc ->
                         changedFiles.each { file ->
                             if (file.startsWith("spring-petclinic-${svc}/")) {
@@ -59,69 +59,61 @@ pipeline {
                     }
 
                     if (changedServices.isEmpty()) {
-                        echo "✅ Không có service nào thay đổi, skip build."
+                        echo "✅ No service changes detected, skipping build."
                         currentBuild.result = 'SUCCESS'
                         return
                     }
 
-                    echo "🧱 Các service thay đổi: ${changedServices.join(', ')}"
+                    echo "🧱 Changed services: ${changedServices.join(', ')}"
 
-                    // Build và push
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-login', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    // build & push by commitId
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-login',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        // login
                         def loginCmd = isUnix()
-                            ? "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+                            ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
                             : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-
                         isUnix() ? sh(loginCmd) : bat(loginCmd)
 
+                        // build & push each changed service
                         changedServices.each { svc ->
                             def image = "npt1601/${svc}:${commitId}"
+                            echo "🚧 Building ${svc} → ${image}"
                             def buildCmd = isUnix()
                                 ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
                                 : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
-
-                            def pushCmd = "docker push ${image}"
-
-                            echo "🚧 Đang build image cho ${svc} → ${image}"
                             isUnix() ? sh(buildCmd) : bat(buildCmd)
 
-                            echo "📤 Push image lên DockerHub: ${image}"
-                            isUnix() ? sh(pushCmd) : bat(pushCmd)
+                            echo "📤 Pushing ${image}"
+                            isUnix() ? sh("docker push ${image}") : bat("docker push ${image}")
                         }
                     }
                 }
-    
             }
         }
 
-        // ───────────────────────────────────────────────────────────────────
-        // New stage: if we’re building a tag like “v1.2.3”, do a full staging build
-        // ───────────────────────────────────────────────────────────────────
         stage('🔖 Release / Staging Build') {
-            // only run on tags that look like v1.2.3
+            // only run on semver tags like v1.2.3
             when {
-                allOf {
-     buildingTag()
-      expression { env.BRANCH_NAME ==~ /^v\d+\.\d+\.\d+$/ }
-                }
+                tag pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP'
             }
             steps {
                 script {
                     def tag = env.BRANCH_NAME
                     echo "🎯 Release tag detected: ${tag}"
 
-                    // Docker Hub login
-                    withCredentials([
-                      usernamePassword(
+                    withCredentials([usernamePassword(
                         credentialsId: 'dockerhub-login',
                         usernameVariable: 'DOCKER_USER',
                         passwordVariable: 'DOCKER_PASS'
-                      )
-                    ]) {
+                    )]) {
+                        // login
                         def loginCmd = isUnix()
-                          ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
-                          : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-
+                            ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
+                            : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
                         isUnix() ? sh(loginCmd) : bat(loginCmd)
 
                         // build & push every service under this tag
@@ -129,10 +121,10 @@ pipeline {
                             def imageName = "npt1601/${svc}:${tag}"
                             echo "🚧 Building ${svc} → ${imageName}"
                             def buildCmd = isUnix()
-                              ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
-                              : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
-
+                                ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
+                                : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
                             isUnix() ? sh(buildCmd) : bat(buildCmd)
+
                             echo "📤 Pushing ${imageName}"
                             isUnix() ? sh("docker push ${imageName}") : bat("docker push ${imageName}")
                         }
@@ -141,17 +133,12 @@ pipeline {
             }
         }
 
-        // ───────────────────────────────────────────────────────────────────
-        // (Optional) deploy into staging namespace via kubectl
-        // replace or expand with your Helm/ArgoCD logic as desired
-        // ───────────────────────────────────────────────────────────────────
         stage('🚀 Deploy to Staging') {
-            when { buildingTag() }
+            when { tag pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP' }
             steps {
                 script {
                     def tag = env.BRANCH_NAME
                     allServices.each { svc ->
-                        // patch the image in the existing Deployment
                         sh """
                           kubectl set image deployment/${svc}-deployment \
                             ${svc}=npt1601/${svc}:${tag} \
@@ -164,11 +151,19 @@ pipeline {
     }
 
     post {
-        success {
-            echo "✅ Pipeline complete!"
-        }
-        failure {
-            echo "❌ Something failed."
-        }
+        success { echo "✅ Pipeline complete!" 
+                                    script {
+if ((env.BRANCH_NAME ?: 'main') == 'main') {
+    echo "🔁 Đang gọi job update-argoCD-deploy-config..."
+    
+    build job: 'update-argoCD-deploy-config',
+          wait: false, // hoặc true nếu bạn muốn đợi chạy xong
+          parameters: [] // có thể truyền params tại đây nếu cần
+} else {
+    echo "⏭ Không phải branch main, không gọi job update-argoCD-deploy-config."
+}
+
+        }}
+        failure { echo "❌ Something failed." }
     }
 }

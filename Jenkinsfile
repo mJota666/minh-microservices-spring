@@ -95,59 +95,50 @@ pipeline {
             }
         }
 
-        stage('🔖 Release / Staging Build') {
-            // only run on semver tags like v1.2.3
+            stage('🔖 Release / Staging Build') {
             when {
-                tag pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP'
+                allOf {
+                    buildingTag()                              // chỉ chạy khi build tag
+                    expression { 
+                        // tên tag phải đúng semver v1.2.3
+                        env.BRANCH_NAME ==~ /^v\d+\.\d+\.\d+$/ 
+                    }
+                }
             }
             steps {
                 script {
                     def tag = env.BRANCH_NAME
-                    echo "🎯 Release tag detected: ${tag}"
+                    echo "🎯 Building RELEASE for tag ${tag}"
 
                     withCredentials([usernamePassword(
                         credentialsId: 'dockerhub-login',
                         usernameVariable: 'DOCKER_USER',
                         passwordVariable: 'DOCKER_PASS'
                     )]) {
-                        // login
-                        def loginCmd = isUnix()
+                        // Docker login
+                        def login = isUnix()
                             ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
                             : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-                        isUnix() ? sh(loginCmd) : bat(loginCmd)
+                        isUnix() ? sh(login) : bat(login)
 
-                        // build & push every service under this tag
+                        // build & push all services với tag này
                         allServices.each { svc ->
-                            def imageName = "npt1601/${svc}:${tag}"
-                            echo "🚧 Building ${svc} → ${imageName}"
+                            def img = "npt1601/${svc}:${tag}"
+                            echo "🚧 Building ${svc} → ${img}"
                             def buildCmd = isUnix()
-                                ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
-                                : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
+                                ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${img}"
+                                : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${img}"
                             isUnix() ? sh(buildCmd) : bat(buildCmd)
 
-                            echo "📤 Pushing ${imageName}"
-                            isUnix() ? sh("docker push ${imageName}") : bat("docker push ${imageName}")
+                            echo "📤 Pushing ${img}"
+                            isUnix() ? sh("docker push ${img}") : bat("docker push ${img}")
                         }
                     }
                 }
             }
         }
 
-        stage('🚀 Deploy to Staging') {
-            when { tag pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP' }
-            steps {
-                script {
-                    def tag = env.BRANCH_NAME
-                    allServices.each { svc ->
-                        sh """
-                          kubectl set image deployment/${svc}-deployment \
-                            ${svc}=npt1601/${svc}:${tag} \
-                            -n staging
-                        """
-                    }
-                }
-            }
-        }
+
     }
 
     post {

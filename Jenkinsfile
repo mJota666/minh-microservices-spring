@@ -145,7 +145,7 @@ pipeline {
                 }
     }
   }
-
+  }
   post {
     success {
       echo "✅ Build pipeline hoàn tất!"

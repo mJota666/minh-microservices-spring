@@ -1,82 +1,38 @@
 pipeline {
-  agent { label 'universal-agent' }
+    agent { label 'universal-agent' }
 
-  tools {
-    jdk 'jdk21'
-    maven 'M3'
-  }
-
-  environment {
-    JAVA_HOME = "${tool 'jdk21'}"
-    PATH      = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
-  }
-
-  stages {
-    // ────────────────────────────────────────────────────────────
-    // Stage MỚI: Nếu build này là một release tag (vd: 1.2.3) thì
-    // build & push image cho tất cả các service với tag đó
-    // ────────────────────────────────────────────────────────────
-    stage('🚀 Release build: build & push all services') {
-      when {
-        expression {
-          // Giả sử bạn đặt tên tag dạng digit.digit.digit (ví dụ 1.2.3)
-          return env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/
-        }
-      }
-      steps {
-        script {
-          def releaseTag = env.BRANCH_NAME   // e.g. "1.2.3"
-          echo "🔖 Detected release tag ${releaseTag}, building ALL services..."
-
-          def services = [
-            'discovery-server','config-server','admin-server',
-            'api-gateway','customers-service','visits-service',
-            'vets-service','genai-service'
-          ]
-
-          // Docker login
-          withCredentials([usernamePassword(
-             credentialsId: 'dockerhub-login',
-             usernameVariable: 'DOCKER_USER',
-             passwordVariable: 'DOCKER_PASS'
-          )]) {
-            if (isUnix()) {
-              sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
-            } else {
-              bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-            }
-          }
-
-          // Build & push mỗi service với tag releaseTag
-          services.each { svc ->
-            def image = "npt1601/${svc}:${releaseTag}"
-            echo "🛠 Building ${image}"
-            if (isUnix()) {
-              sh "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
-              sh "docker push ${image}"
-            } else {
-              bat "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
-              bat "docker push ${image}"
-            }
-          }
-
-          // Sau khi build & push xong, có thể trigger job CD/staging ở đây
-          echo "✅ All services built and pushed with tag ${releaseTag}"
-        }
-      }
+    tools {
+        jdk 'jdk21'
+        maven 'M3'
     }
 
-    // ────────────────────────────────────────────────────────────
-    // Stage nguyên bản: chỉ build những service thay đổi
-    // Chỉ chạy khi không phải release-tag
-    // ────────────────────────────────────────────────────────────
-    stage('🧬 Detect changed services') {
-      when {
-        expression {
-          return !(env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+    environment {
+        JAVA_HOME = "${tool 'jdk21'}"
+        PATH      = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
+    }
+
+    // list all micro‑services here so we can reuse it
+    def allServices = [
+        'vets-service',
+        'customers-service',
+        'visits-service',
+        'api-gateway',
+        'config-server',
+        'discovery-server',
+        'admin-server'
+    ]
+
+    stages {
+        stage('📥 Checkout') {
+            steps {
+                git branch: "${env.BRANCH_NAME ?: 'main'}",
+                    url: 'https://github.com/NPT0116/thanh-microservices-spring.git'
+            }
         }
-      }
-  steps {
+
+        stage('🧬 Detect changed services') {
+            when { not { buildingTag() } }  // skip on tags
+            steps {
                 script {
                     def commitId = isUnix()
                         ? sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
@@ -143,21 +99,85 @@ pipeline {
                         }
                     }
                 }
-    }
-  }
-  }
-  post {
-    success {
-      echo "✅ Build pipeline hoàn tất!"
-      script {
-        // Nếu đây là branch main chứ không phải tag, trigger tiếp job ArgoCD
-        if ((env.BRANCH_NAME ?: 'main') == 'main' && !(env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)) {
-          build job: 'update-argoCD-deploy-config', wait: false
+    
+            }
         }
-      }
+
+        // ───────────────────────────────────────────────────────────────────
+        // New stage: if we’re building a tag like “v1.2.3”, do a full staging build
+        // ───────────────────────────────────────────────────────────────────
+        stage('🔖 Release / Staging Build') {
+            // only run on tags that look like v1.2.3
+            when {
+                allOf {
+                    buildingTag()
+                    branch pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP'
+                }
+            }
+            steps {
+                script {
+                    def tag = env.BRANCH_NAME
+                    echo "🎯 Release tag detected: ${tag}"
+
+                    // Docker Hub login
+                    withCredentials([
+                      usernamePassword(
+                        credentialsId: 'dockerhub-login',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                      )
+                    ]) {
+                        def loginCmd = isUnix()
+                          ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
+                          : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+
+                        isUnix() ? sh(loginCmd) : bat(loginCmd)
+
+                        // build & push every service under this tag
+                        allServices.each { svc ->
+                            def imageName = "npt1601/${svc}:${tag}"
+                            echo "🚧 Building ${svc} → ${imageName}"
+                            def buildCmd = isUnix()
+                              ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
+                              : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${imageName}"
+
+                            isUnix() ? sh(buildCmd) : bat(buildCmd)
+                            echo "📤 Pushing ${imageName}"
+                            isUnix() ? sh("docker push ${imageName}") : bat("docker push ${imageName}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // (Optional) deploy into staging namespace via kubectl
+        // replace or expand with your Helm/ArgoCD logic as desired
+        // ───────────────────────────────────────────────────────────────────
+        stage('🚀 Deploy to Staging') {
+            when { buildingTag() }
+            steps {
+                script {
+                    def tag = env.BRANCH_NAME
+                    allServices.each { svc ->
+                        // patch the image in the existing Deployment
+                        sh """
+                          kubectl set image deployment/${svc}-deployment \
+                            ${svc}=npt1601/${svc}:${tag} \
+                            -n staging
+                        """
+                    }
+                }
+            }
+        }
     }
-    failure {
-      echo "❌ Có lỗi trong quá trình build!"
+
+    post {
+        success {
+            echo "✅ Pipeline complete!"
+        }
+        failure {
+            echo "❌ Something failed."
+        }
     }
-  }
 }

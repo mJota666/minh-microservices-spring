@@ -101,8 +101,8 @@ pipeline {
             // only run on tags that look like v1.2.3
             when {
                 allOf {
-                    buildingTag()
-                    branch pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$', comparator: 'REGEXP'
+     buildingTag()
+      expression { env.BRANCH_NAME ==~ /^v\d+\.\d+\.\d+$/ }
                 }
             }
             steps {

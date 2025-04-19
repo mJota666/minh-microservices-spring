@@ -1,3 +1,12 @@
+    def allServices = [
+        'vets-service',
+        'customers-service',
+        'visits-service',
+        'api-gateway',
+        'config-server',
+        'discovery-server',
+        'admin-server'
+    ]
 pipeline {
     agent { label 'universal-agent' }
 
@@ -12,15 +21,7 @@ pipeline {
     }
 
     // list all micro‑services here so we can reuse it
-    def allServices = [
-        'vets-service',
-        'customers-service',
-        'visits-service',
-        'api-gateway',
-        'config-server',
-        'discovery-server',
-        'admin-server'
-    ]
+
 
     stages {
         stage('📥 Checkout') {

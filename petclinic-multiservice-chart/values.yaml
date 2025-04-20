@@ -1,48 +1,48 @@
 services:
   - name: discovery-server
-    image: npt1601/discovery-server
+    image: nqminh274/discovery-server
     tag: latest
     port: 8761
     nodePort: 30004
 
   - name: config-server
-    image: npt1601/config-server
+    image: nqminh274/config-server
     tag: latest
     port: 8888
     nodePort: 30088
 
   - name: admin-server
-    image: npt1601/admin-server
+    image: nqminh274/admin-server
     tag: latest
     port: 8080
     nodePort: 30001
 
   - name: api-gateway
-    image: npt1601/api-gateway
+    image: nqminh274/api-gateway
     tag: latest
     port: 8080
     nodePort: 30002
 
   - name: customers-service
-    image: npt1601/customers-service
+    image: nqminh274/customers-service
     tag: latest
     port: 8080
     nodePort: 30003
 
   - name: visits-service
-    image: npt1601/visits-service
+    image: nqminh274/visits-service
     tag: latest
     port: 8080
     nodePort: 30008
 
   - name: vets-service
-    image: npt1601/vets-service
+    image: nqminh274/vets-service
     tag: latest
     port: 8080
     nodePort: 30007
 
   - name: genai-service
-    image: npt1601/genai-service
+    image: nqminh274/genai-service
     tag: latest
     port: 8080
     nodePort: 30005

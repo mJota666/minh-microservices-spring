@@ -1,15 +1,3 @@
-// ── shared list of microservices ──
-def allServices = [
-    'vets-service',
-    'customers-service',
-    'visits-service',
-    'api-gateway',
-    'config-server',
-    'discovery-server',
-    'admin-server',
-    'genai-service'
-]
-
 pipeline {
     agent { label 'universal-agent' }
 
@@ -20,37 +8,45 @@ pipeline {
 
     environment {
         JAVA_HOME = "${tool 'jdk21'}"
-        PATH      = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
+        PATH = "${env.JAVA_HOME}/bin${isUnix() ? ':' : ';'}${env.PATH}"
     }
 
     stages {
         stage('📥 Checkout') {
             steps {
-                // checkout whatever ref (branch or tag) Jenkins detected
-                checkout scm
+                git branch: "${env.BRANCH_NAME ?: 'main'}",
+                    url: 'https://github.com/mJota666/minh-microservices-spring.git'
             }
         }
 
         stage('🧬 Detect changed services') {
-            when { not { buildingTag() } }  // skip for tag‐builds
             steps {
                 script {
-                    // grab the short commit ID
                     def commitId = isUnix()
                         ? sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                         : bat(script: "git rev-parse --short HEAD", returnStdout: true).trim().readLines().last().trim()
 
                     echo "🔍 Commit ID: ${commitId}"
 
-                    // what files changed
+                    // Lấy danh sách file thay đổi
                     def changedFiles = isUnix()
-                        ? sh(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().split('\n')
+                        ? sh(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().split("\n")
                         : bat(script: "git diff --name-only HEAD~1 HEAD", returnStdout: true).trim().readLines()
 
-                    echo "📂 Files changed:\n${changedFiles.join('\n')}"
+                    echo "📂 File thay đổi:\n${changedFiles.join('\n')}"
 
-                    // detect which services changed
+                    def allServices = [
+                        'vets-service',
+                        'customers-service',
+                        'visits-service',
+                        'api-gateway',
+                        'config-server',
+                        'discovery-server',
+                        'admin-server'
+                    ]
+
                     def changedServices = [] as Set
+
                     allServices.each { svc ->
                         changedFiles.each { file ->
                             if (file.startsWith("spring-petclinic-${svc}/")) {
@@ -60,98 +56,45 @@ pipeline {
                     }
 
                     if (changedServices.isEmpty()) {
-                        echo "✅ No service changes detected, skipping build."
+                        echo "✅ Không có service nào thay đổi, skip build."
                         currentBuild.result = 'SUCCESS'
                         return
                     }
 
-                    echo "🧱 Changed services: ${changedServices.join(', ')}"
+                    echo "🧱 Các service thay đổi: ${changedServices.join(', ')}"
 
-                    // build & push by commitId
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-login',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        // login
+                    // Build và push
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-login', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         def loginCmd = isUnix()
-                            ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
+                            ? "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
                             : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
+
                         isUnix() ? sh(loginCmd) : bat(loginCmd)
 
-                        // build & push each changed service
                         changedServices.each { svc ->
-                            def image = "npt1601/${svc}:${commitId}"
-                            echo "🚧 Building ${svc} → ${image}"
+                            def image = "nqminh274/${svc}:${commitId}"
                             def buildCmd = isUnix()
                                 ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
                                 : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${image}"
+
+                            def pushCmd = "docker push ${image}"
+
+                            echo "🚧 Đang build image cho ${svc} → ${image}"
                             isUnix() ? sh(buildCmd) : bat(buildCmd)
 
-                            echo "📤 Pushing ${image}"
-                            isUnix() ? sh("docker push ${image}") : bat("docker push ${image}")
+                            echo "📤 Push image lên DockerHub: ${image}"
+                            isUnix() ? sh(pushCmd) : bat(pushCmd)
                         }
                     }
                 }
             }
         }
-
-            stage('🔖 Release / Staging Build') {
-            when {
-                allOf {
-                    buildingTag()                              // chỉ chạy khi build tag
-                    expression { 
-                        // tên tag phải đúng semver v1.2.3
-                        env.BRANCH_NAME ==~ /^v\d+\.\d+\.\d+$/ 
-                    }
-                }
-            }
-            steps {
-                script {
-                    def tag = env.BRANCH_NAME
-                    echo "🎯 Building RELEASE for tag ${tag}"
-
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-login',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        // Docker login
-                        def login = isUnix()
-                            ? "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
-                            : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-                        isUnix() ? sh(login) : bat(login)
-
-                        // build & push all services với tag này
-                        allServices.each { svc ->
-                            def img = "npt1601/${svc}:${tag}"
-                            echo "🚧 Building ${svc} → ${img}"
-                            def buildCmd = isUnix()
-                                ? "./mvnw -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${img}"
-                                : "mvnw.cmd -pl spring-petclinic-${svc} spring-boot:build-image -DskipTests -Dspring-boot.build-image.imageName=${img}"
-                            isUnix() ? sh(buildCmd) : bat(buildCmd)
-
-                            echo "📤 Pushing ${img}"
-                            isUnix() ? sh("docker push ${img}") : bat("docker push ${img}")
-                        }
-                              // ── Trigger staging-config-repo job remotely ──
-      def triggerUrl = "${env.JENKINS_URL}job/staging-config-repo/build?token=staging"
-      echo "🌐 Triggering staging-config-repo: ${triggerUrl}"
-    
-    build job: 'staging-config-repo',
-          wait: false, // hoặc true nếu bạn muốn đợi chạy xong
-          parameters: [] // có thể truyền params tại đây nếu cần
-                    }
-                }
-            }
-        }
-
-
     }
 
     post {
-        success { echo "✅ Pipeline complete!" 
-                                    script {
+        success {
+            echo "✅ Build thành công!"
+                    script {
 if ((env.BRANCH_NAME ?: 'main') == 'main') {
     echo "🔁 Đang gọi job update-argoCD-deploy-config..."
     
@@ -162,7 +105,10 @@ if ((env.BRANCH_NAME ?: 'main') == 'main') {
     echo "⏭ Không phải branch main, không gọi job update-argoCD-deploy-config."
 }
 
-        }}
-        failure { echo "❌ Something failed." }
+        }
+        }
+        failure {
+            echo "❌ Build thất bại!"
+        }
     }
 }

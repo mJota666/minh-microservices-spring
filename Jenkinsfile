@@ -64,7 +64,7 @@ pipeline {
                     echo "🧱 Các service thay đổi: ${changedServices.join(', ')}"
 
                     // Build và push
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-login', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    withCredentials([usernamePassword(credentialsId: 'DockerHub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         def loginCmd = isUnix()
                             ? "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
                             : "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
